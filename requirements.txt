@@ -8,3 +8,6 @@ transformers
 torch
 python-dotenv
 pydantic
+chromadb
+Pylance
+uuid
