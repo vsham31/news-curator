@@ -2,9 +2,15 @@ from transformers import pipeline
 
 class NewsGenerator:
     def __init__(self):
-        self.summarizer = pipeline("summarization", model="facebook/bart-large-cnn")
+        self.summarizer = pipeline("text-generation", model="gpt2")
 
     def generate_summary(self, articles):
-        combined_text = " ".join([a["content"] for a in articles])
-        summary = self.summarizer(combined_text[:3000], max_length=300, min_length=100, do_sample=False)
-        return summary[0]["summary_text"]
+        if not articles:
+            return "No articles found."
+        
+        # Combine article texts
+        combined_text = " ".join([a.get("content", "") for a in articles])[:512]
+        
+        # Generate summary
+        result = self.summarizer(combined_text, max_length=150, do_sample=True, temperature=0.7)
+        return result[0]["generated_text"]
