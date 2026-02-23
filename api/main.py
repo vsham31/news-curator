@@ -18,7 +18,14 @@ generator = NewsGenerator()
 # -------------------------------
 @app.get("/curated-news")
 def curated_news_faiss(query: str = "technology"):
-    articles = fetch_news(query)
+    result = fetch_news(query)
+    if not result["ok"]:
+        return {"error": result["error"]}
+
+    articles = result["articles"]
+    if not articles:
+        return {"error": {"type": "no_articles", "detail": "No articles found"}}
+
     vector_store.add_documents(articles)
     relevant_articles = vector_store.search(query)
 
@@ -37,7 +44,13 @@ def curated_news_faiss(query: str = "technology"):
 # -------------------------------
 @app.get("/news-db")
 def curated_news_vector_db(query: str = "technology"):
-    articles = fetch_news(query)
+    result = fetch_news(query)
+    if not result["ok"]:
+        return {"error": result["error"]}
+
+    articles = result["articles"]
+    if not articles:
+        return {"error": {"type": "no_articles", "detail": "No articles found"}}
 
     # Persist embeddings
     upsert_articles(articles)
