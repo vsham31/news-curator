@@ -27,6 +27,21 @@ STOP_WORDS = {
 WORD_PATTERN = re.compile(r"[a-zA-Z][a-zA-Z0-9]{2,}")
 
 
+def _append_unique_topics(target, candidates, limit):
+    if limit <= 0:
+        return target
+
+    seen = set(target)
+    for candidate in candidates:
+        if not candidate or candidate in seen:
+            continue
+        target.append(candidate)
+        seen.add(candidate)
+        if len(target) >= limit:
+            break
+    return target
+
+
 def _article_id(article):
     raw = f"{article.get('source', '')}|{article.get('title', '')}|{article.get('content', '')}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
@@ -128,6 +143,10 @@ def _recent_searches(window_hours=72, max_items=200):
     searches = []
     for doc, meta in zip(docs, metas):
         ts = (meta or {}).get("ts", 0)
+        try:
+            ts = float(ts)
+        except (TypeError, ValueError):
+            continue
         if ts < cutoff:
             continue
         query = ((meta or {}).get("query") or doc or "").strip().lower()
@@ -139,6 +158,9 @@ def _recent_searches(window_hours=72, max_items=200):
 
 
 def _fetch_live_trending_topics(max_topics=3):
+    if max_topics <= 0 or not NEWS_API_KEY:
+        return []
+
     url = (
         "https://newsapi.org/v2/top-headlines"
         f"?language=en&pageSize=40&apiKey={NEWS_API_KEY}"
@@ -162,19 +184,16 @@ def _fetch_live_trending_topics(max_topics=3):
         term_counts.update(_tokenize_topic_terms(combined))
 
     selected = []
-    for phrase, _ in phrase_counts.most_common(20):
-        if phrase in selected:
-            continue
-        selected.append(phrase)
-        if len(selected) >= max_topics:
-            return selected
-
-    for term, _ in term_counts.most_common(30):
-        if term in selected:
-            continue
-        selected.append(term)
-        if len(selected) >= max_topics:
-            break
+    _append_unique_topics(
+        selected,
+        (phrase for phrase, _ in phrase_counts.most_common(20)),
+        max_topics,
+    )
+    _append_unique_topics(
+        selected,
+        (term for term, _ in term_counts.most_common(30)),
+        max_topics,
+    )
 
     return selected
 
@@ -192,14 +211,13 @@ def suggest_topics(query, related_count=3, history_count=3, trending_count=3):
         text = f"{title} {doc or ''}"
         article_term_counts.update(_tokenize_topic_terms(text))
 
-    related_topics = []
     query_tokens = set(_tokenize_topic_terms(normalized))
-    for term, _ in article_term_counts.most_common(20):
-        if term in query_tokens:
-            continue
-        related_topics.append(term)
-        if len(related_topics) >= related_count:
-            break
+    related_topics = []
+    _append_unique_topics(
+        related_topics,
+        (term for term, _ in article_term_counts.most_common(20) if term not in query_tokens),
+        related_count,
+    )
 
     recent_searches = _recent_searches(window_hours=72)
     history_counts = Counter()
@@ -211,19 +229,22 @@ def suggest_topics(query, related_count=3, history_count=3, trending_count=3):
                 continue
             history_counts[token] += 1
 
-    history_topics = [topic for topic, _ in history_counts.most_common(history_count)]
-
-    for topic in related_topics:
-        if len(history_topics) >= history_count:
-            break
-        if topic not in history_topics:
-            history_topics.append(topic)
+    history_topics = []
+    _append_unique_topics(
+        history_topics,
+        (topic for topic, _ in history_counts.most_common(max(history_count * 3, 10))),
+        history_count,
+    )
+    _append_unique_topics(history_topics, related_topics, history_count)
 
     trending_topics = _fetch_live_trending_topics(max_topics=trending_count)
+    if len(trending_topics) < trending_count:
+        fallback_topics = history_topics + related_topics
+        _append_unique_topics(trending_topics, fallback_topics, trending_count)
 
     return {
         "related_topics": related_topics,
         "history_topics": history_topics,
         "trending_topics": trending_topics,
-        "recent_searches_considered": len(recent_searches)
+        "recent_searches_considered": len(recent_searches),
     }

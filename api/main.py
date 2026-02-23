@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from itertools import zip_longest
 from ingestion.fetch_news import fetch_news
 from embeddings.vector_store import VectorStore
 from rag.generator import NewsGenerator
@@ -39,16 +40,23 @@ def curated_news_vector_db(query: str = "technology"):
     vectors = query_similar(query, k=7)
 
     # Defensive check
-    if not vectors["documents"]:
+    if not vectors.get("documents"):
         return {"error": "No relevant articles found"}
 
-    docs = vectors["documents"][0]
-    metas = vectors["metadatas"][0]
+    docs = (vectors.get("documents") or [[]])[0]
+    metas = (vectors.get("metadatas") or [[]])[0]
 
     contexts = [
-        {"content": d, "source": m["source"]}
-        for d, m in zip(docs, metas)
+        {
+            "content": d,
+            "source": ((m or {}).get("source") or "unknown"),
+        }
+        for d, m in zip_longest(docs, metas, fillvalue=None)
+        if d
     ]
+
+    if not contexts:
+        return {"error": "No relevant articles found"}
 
     summary = generator.generate_summary(contexts)
     suggestions = suggest_topics(query, related_count=3, history_count=3, trending_count=3)
