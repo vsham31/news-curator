@@ -51,7 +51,7 @@ def curated_news_vector_db(query: str = "technology"):
     ]
 
     summary = generator.generate_summary(contexts)
-    suggestions = suggest_topics(query, related_count=3, trending_count=3)
+    suggestions = suggest_topics(query, related_count=3, history_count=3, trending_count=3)
 
     return {
         "mode": "vector-db",

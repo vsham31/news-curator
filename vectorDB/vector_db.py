@@ -4,6 +4,8 @@ import hashlib
 import re
 import time
 from collections import Counter
+import requests
+from ingestion.fetch_news import NEWS_API_KEY
 
 # Create persistent client
 client = chromadb.PersistentClient(path="./vector_db")
@@ -20,7 +22,7 @@ STOP_WORDS = {
     "out", "over", "said", "says", "she", "so", "some", "than", "that", "the",
     "their", "them", "there", "they", "this", "to", "up", "was", "we", "were",
     "what", "when", "where", "which", "who", "will", "with", "you", "your", "vs",
-    "tech", "technology", "latest", "news", "update"
+    "tech", "technology", "latest", "news", "update", "breaking", "live"
 }
 WORD_PATTERN = re.compile(r"[a-zA-Z][a-zA-Z0-9]{2,}")
 
@@ -37,7 +39,7 @@ def upsert_articles(articles):
     ids = [_article_id(a) for a in articles]
 
     try:
-        existing = set(collection.get(ids=ids, include=[])['ids'])
+        existing = set(collection.get(ids=ids, include=[])["ids"])
     except Exception:
         existing = set()
 
@@ -89,6 +91,16 @@ def _tokenize_topic_terms(text):
     return [token for token in tokens if token not in STOP_WORDS]
 
 
+def _extract_topic_phrases(text):
+    tokens = _tokenize_topic_terms(text)
+    phrases = []
+    for first, second in zip(tokens, tokens[1:]):
+        if first == second:
+            continue
+        phrases.append(f"{first} {second}")
+    return phrases
+
+
 def record_search_query(query):
     normalized = (query or "").strip().lower()
     if not normalized:
@@ -126,7 +138,48 @@ def _recent_searches(window_hours=72, max_items=200):
     return searches
 
 
-def suggest_topics(query, related_count=3, trending_count=3):
+def _fetch_live_trending_topics(max_topics=3):
+    url = (
+        "https://newsapi.org/v2/top-headlines"
+        f"?language=en&pageSize=40&apiKey={NEWS_API_KEY}"
+    )
+
+    try:
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+    except requests.RequestException:
+        return []
+
+    phrase_counts = Counter()
+    term_counts = Counter()
+
+    for article in data.get("articles", []):
+        title = article.get("title") or ""
+        description = article.get("description") or ""
+        combined = f"{title} {description}"
+        phrase_counts.update(_extract_topic_phrases(combined))
+        term_counts.update(_tokenize_topic_terms(combined))
+
+    selected = []
+    for phrase, _ in phrase_counts.most_common(20):
+        if phrase in selected:
+            continue
+        selected.append(phrase)
+        if len(selected) >= max_topics:
+            return selected
+
+    for term, _ in term_counts.most_common(30):
+        if term in selected:
+            continue
+        selected.append(term)
+        if len(selected) >= max_topics:
+            break
+
+    return selected
+
+
+def suggest_topics(query, related_count=3, history_count=3, trending_count=3):
     normalized = (query or "").strip().lower()
 
     similar_results = query_similar(normalized or "technology", k=10)
@@ -149,25 +202,28 @@ def suggest_topics(query, related_count=3, trending_count=3):
             break
 
     recent_searches = _recent_searches(window_hours=72)
-    trend_counts = Counter()
+    history_counts = Counter()
     for past_query, _ in recent_searches:
         if past_query == normalized:
             continue
         for token in _tokenize_topic_terms(past_query):
             if token in query_tokens:
                 continue
-            trend_counts[token] += 1
+            history_counts[token] += 1
 
-    trending_topics = [topic for topic, _ in trend_counts.most_common(trending_count)]
+    history_topics = [topic for topic, _ in history_counts.most_common(history_count)]
 
     for topic in related_topics:
-        if len(trending_topics) >= trending_count:
+        if len(history_topics) >= history_count:
             break
-        if topic not in trending_topics:
-            trending_topics.append(topic)
+        if topic not in history_topics:
+            history_topics.append(topic)
+
+    trending_topics = _fetch_live_trending_topics(max_topics=trending_count)
 
     return {
         "related_topics": related_topics,
+        "history_topics": history_topics,
         "trending_topics": trending_topics,
         "recent_searches_considered": len(recent_searches)
     }
