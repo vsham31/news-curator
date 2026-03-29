@@ -1,16 +1,33 @@
-from transformers import pipeline
+from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+
 
 class NewsGenerator:
-    def __init__(self):
-        self.summarizer = pipeline("text-generation", model="gpt2")
+    def __init__(self, model_name="facebook/bart-large-cnn"):
+        self.model_name = model_name
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        self.model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
 
     def generate_summary(self, articles):
         if not articles:
             return "No articles found."
-        
-        # Combine article texts
-        combined_text = " ".join([a.get("content", "") for a in articles])[:512]
-        
-        # Generate summary
-        result = self.summarizer(combined_text, max_length=150, do_sample=True, temperature=0.7)
-        return result[0]["generated_text"]
+
+        combined_text = " ".join([a.get("content", "") for a in articles]).strip()
+        if not combined_text:
+            return "No article content available to summarize."
+
+        inputs = self.tokenizer(
+            combined_text,
+            max_length=1024,
+            truncation=True,
+            return_tensors="pt",
+        )
+
+        summary_ids = self.model.generate(
+            inputs["input_ids"],
+            attention_mask=inputs.get("attention_mask"),
+            max_length=150,
+            min_length=30,
+            num_beams=4,
+            early_stopping=True,
+        )
+        return self.tokenizer.decode(summary_ids[0], skip_special_tokens=True)
