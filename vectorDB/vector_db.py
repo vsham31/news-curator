@@ -79,10 +79,10 @@ def upsert_articles(articles):
         metadatas=[
             {
                 "source": a["source"],
-                "title": a["title"]
+                "title": a["title"],
             }
             for a in new_articles
-        ]
+        ],
     )
     return len(new_articles)
 
@@ -92,7 +92,41 @@ def query_similar(query, k=5):
 
     results = collection.query(
         query_embeddings=query_embedding,
-        n_results=k
+        n_results=k,
+    )
+
+    return results
+
+
+def _tokenize_topic_terms(text):
+    if not text:
+        return []
+
+    tokens = WORD_PATTERN.findall(text.lower())
+    return [token for token in tokens if token not in STOP_WORDS]
+
+
+def _extract_topic_phrases(text):
+    tokens = _tokenize_topic_terms(text)
+    phrases = []
+    for first, second in zip(tokens, tokens[1:]):
+        if first == second:
+            continue
+        phrases.append(f"{first} {second}")
+    return phrases
+
+
+def record_search_query(query):
+    normalized = (query or "").strip().lower()
+    if not normalized:
+        return
+
+    timestamp = time.time()
+    search_id = hashlib.sha256(f"{normalized}|{timestamp}".encode("utf-8")).hexdigest()
+    search_collection.upsert(
+        ids=[search_id],
+        documents=[normalized],
+        metadatas=[{"query": normalized, "ts": timestamp}],
     )
 
     return results
