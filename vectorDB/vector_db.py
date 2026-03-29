@@ -4,9 +4,7 @@ import hashlib
 import re
 import time
 from collections import Counter
-
 import requests
-
 from ingestion.fetch_news import NEWS_API_KEY
 
 # Create persistent client
@@ -14,7 +12,6 @@ client = chromadb.PersistentClient(path="./vector_db")
 
 collection = client.get_or_create_collection(name="news")
 search_collection = client.get_or_create_collection(name="search_history")
-
 embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
 
 STOP_WORDS = {
@@ -130,6 +127,40 @@ def record_search_query(query):
         ids=[search_id],
         documents=[normalized],
         metadatas=[{"query": normalized, "ts": timestamp}],
+    )
+
+    return results
+
+
+def _tokenize_topic_terms(text):
+    if not text:
+        return []
+
+    tokens = WORD_PATTERN.findall(text.lower())
+    return [token for token in tokens if token not in STOP_WORDS]
+
+
+def _extract_topic_phrases(text):
+    tokens = _tokenize_topic_terms(text)
+    phrases = []
+    for first, second in zip(tokens, tokens[1:]):
+        if first == second:
+            continue
+        phrases.append(f"{first} {second}")
+    return phrases
+
+
+def record_search_query(query):
+    normalized = (query or "").strip().lower()
+    if not normalized:
+        return
+
+    timestamp = time.time()
+    search_id = hashlib.sha256(f"{normalized}|{timestamp}".encode("utf-8")).hexdigest()
+    search_collection.upsert(
+        ids=[search_id],
+        documents=[normalized],
+        metadatas=[{"query": normalized, "ts": timestamp}]
     )
 
 
